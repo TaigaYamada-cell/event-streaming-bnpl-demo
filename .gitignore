@@ -1,0 +1,21 @@
+# Go
+/atone-hands-on
+*.o
+*.a
+*.so
+*.exe
+*.dll
+*.so
+/vendor
+/pkg
+/bin
+
+# IDE settings
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# AWS credentials
+.aws/

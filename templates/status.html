@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>atone ユーザー状況</title>
+</head>
+<body>
+    <script>
+        const userId = "{{ .userId }}";
+        const ws = new WebSocket(`ws://localhost:8080/ws`);
+
+        ws.onmessage = function(event) {
+            console.log("Server message:", event.data);
+            if (event.data === "update") {
+                // サーバーから更新通知を受け取ったらページを再読み込み
+                window.location.reload();
+            }
+        };
+
+        ws.onclose = function(event) {
+            console.log("WebSocket connection closed.");
+        };
+
+        ws.onerror = function(error) {
+            console.log("WebSocket error:", error);
+        };
+    </script>
+    <h1>ユーザーID: {{ .userId }} の状況</h1>
+
+    <h2>購入履歴</h2>
+    <ul>
+    {{ range .purchaseHistory }}
+        <li>注文ID: {{ .orderId }} - 金額: {{ .amount }}円, 期日: {{ .dueDate }}, 支払いモード: {{ .paymentMode }}</li>
+    {{ end }}
+    </ul>
+
+    <h2>請求状況</h2>
+    <ul>
+    {{ range .billingStatus }}
+        <li>請求ID: {{ .billId }} - 金額: {{ .amount }}円, 状態: {{ .status }}, 請求日: {{ .issuedDate }}
+            {{ if .paidDate }} (支払日: {{ .paidDate }}){{ end }}
+        </li>
+    {{ end }}
+    </ul>
+</body>
+</html>

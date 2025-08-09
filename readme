@@ -1,0 +1,46 @@
+
+# server起動
+go run main.go
+
+go run ./consumer/consumer.go
+
+curl -X POST http://localhost:8080/purchase \
+-H "Content-Type: application/json" \
+-d '{
+  "user_id": "user-1234",
+  "product_id": "prod-5678",
+  "product_name": "Go言語 Tシャツ",
+  "amount": 3500
+}'
+
+# MySQLコンテナを起動
+docker run --name mysql-db -e MYSQL_ROOT_PASSWORD=password -d mysql:8.0
+
+# コンテナにログインしてデータベースとテーブルを作成
+docker exec -it mysql-db mysql -p
+
+# MySQLのプロンプトで以下を実行
+CREATE DATABASE atone_hands_on;
+USE atone_hands_on;
+
+# イベント履歴を保存するテーブル
+CREATE TABLE events (
+  id VARCHAR(255) PRIMARY KEY,
+  event_type VARCHAR(255) NOT NULL,
+  event_data JSON NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+# プロジェクション（読み取り用ビュー）を保存するテーブル
+CREATE TABLE payment_promises (
+  id VARCHAR(255) PRIMARY KEY,
+  order_id VARCHAR(255) NOT NULL,
+  user_id VARCHAR(255) NOT NULL,
+  amount INT NOT NULL,
+  due_date DATE NOT NULL,
+  payment_mode VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+# MySQLからログアウト
+exit
