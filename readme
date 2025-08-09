@@ -1,29 +1,67 @@
+# atone-hands-on
 
-# server起動
-go run main.go
+[](https://www.google.com/search?q=https://github.com/your-username/atone-hands-on/actions/workflows/go.yml)
 
-go run ./consumer/consumer.go
+## 概要
 
-curl -X POST http://localhost:8080/purchase \
--H "Content-Type: application/json" \
--d '{
-  "user_id": "user-1234",
-  "product_id": "prod-5678",
-  "product_name": "Go言語 Tシャツ",
-  "amount": 3500
-}'
+このプロジェクトは、後払い決済サービス「atone」を模したシステムを、**CQRS（コマンドクエリ責務分離）とイベント駆動アーキテクチャ**を用いて開発するハンズオンです。Go言語とGinフレームワークを使用し、メッセージブローカーとしてAWS Kinesisを、データベースとしてMySQLを利用しています。
 
+システムの核となる考え方は、すべての出来事を**イベント**として記録し、そのイベントから最新の状態を**プロジェクション（読み取り用ビュー）として導出するイベントソーシング**です。
+
+## アーキテクチャ
+
+ユーザーからのアクションは**コマンド**として扱われ、結果として**イベント**がKinesisに発行されます。イベントを購読するコンシューマーは、イベントの内容に基づいて読み取り用のデータベースを更新します。ユーザーインターフェース（UI）は、この読み取り用データベースからデータを取得し、WebSocketを通じてリアルタイムに更新されます。
+
+-----
+
+## 環境構築
+
+### 必要なツール
+
+  * **Go言語** (v1.18以上)
+  * **Docker**
+  * **AWSアカウント** (AWS CLIで認証情報が設定済みであること)
+
+### 1\. プロジェクトのクローン
+
+まず、このリポジトリをクローンします。
+
+```sh
+git clone https://github.com/TaigaYamada-cell/event-streaming-bnpl-demo.git
+cd event-streaming-bnpl-demo
+```
+
+### 2\. Goモジュールのインストール
+
+必要なGoモジュールをインストールします。
+
+```sh
+go mod tidy
+```
+
+### 3\. AWS Kinesisストリームの作成
+
+AWSコンソールで、Kinesis Data Streamsを以下の設定で作成してください。
+
+  * **ストリーム名**: `atone-events-stream`
+  * **キャパシティーモード**: オンデマンド
+
+### 4\. MySQLデータベースの起動とセットアップ
+
+DockerでMySQLコンテナを起動し、データベースとテーブルをセットアップします。
+
+```sh
 # MySQLコンテナを起動
-docker run --name mysql-db -e MYSQL_ROOT_PASSWORD=password -d mysql:8.0
+docker run --name mysql-db -e MYSQL_ROOT_PASSWORD=password -d -p 3306:3306 mysql:8.0
 
-# コンテナにログインしてデータベースとテーブルを作成
+# データベースに接続
 docker exec -it mysql-db mysql -p
 
-# MySQLのプロンプトで以下を実行
+# MySQLプロンプトで以下を実行
 CREATE DATABASE atone_hands_on;
 USE atone_hands_on;
 
-# イベント履歴を保存するテーブル
+-- イベント履歴を保存するテーブル
 CREATE TABLE events (
   id VARCHAR(255) PRIMARY KEY,
   event_type VARCHAR(255) NOT NULL,
@@ -31,16 +69,83 @@ CREATE TABLE events (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-# プロジェクション（読み取り用ビュー）を保存するテーブル
+-- プロジェクション（支払約束）
 CREATE TABLE payment_promises (
   id VARCHAR(255) PRIMARY KEY,
   order_id VARCHAR(255) NOT NULL,
   user_id VARCHAR(255) NOT NULL,
   amount INT NOT NULL,
   due_date DATE NOT NULL,
-  payment_mode VARCHAR(50) NOT NULL,
+  payment_mode VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
-# MySQLからログアウト
-exit
+-- プロジェクション（会員請求）
+CREATE TABLE member_bills (
+  id VARCHAR(255) PRIMARY KEY,
+  promise_id VARCHAR(255) NOT NULL,
+  user_id VARCHAR(255) NOT NULL,
+  amount INT NOT NULL,
+  status VARCHAR(50) NOT NULL, -- 'unpaid', 'paid'
+  issued_date DATE NOT NULL,
+  paid_date DATE NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+-----
+
+## 動作確認
+
+### 1\. アプリケーションの起動
+
+3つのターミナルを開き、それぞれ以下のコマンドを実行します。
+
+```sh
+# ターミナル1: イベントコンシューマーの起動
+go run ./consumer/consumer.go
+
+# ターミナル2: API/UIサーバーの起動
+go run ./main.go
+```
+
+### 2\. 動作フローの検証
+
+別のターミナルで以下のcURLコマンドを実行し、ブラウザ（`http://localhost:8080/user/test-user-01`）でUIの自動更新を確認します。
+（Websocketの設定が正しくなくてリアルタイム更新されないかも。）
+
+#### ステップ A: 商品購入と支払約束の作成
+
+```sh
+curl -X POST http://localhost:8080/purchase -H "Content-Type: application/json" -d '{"user_id": "test-user-01", "product_id": "prod-01", "amount": 5000}'
+```
+
+  * **確認**: ブラウザのUIが自動更新され、購入履歴に新しいレコードが表示されることを確認します。
+
+#### ステップ B: 会員請求の発行
+
+`payment_promises`テーブルから`id`をコピーし、以下のコマンドを実行します。
+
+```sh
+# 支払約束IDを取得するSQL
+SELECT id FROM payment_promises WHERE user_id = 'test-user-01';
+
+# cURLコマンド
+curl -X POST http://localhost:8080/create-bill/immediate -H "Content-Type: application/json" -d '{"promise_id": "ここにIDを貼り付け", "user_id": "test-user-01", "amount": 5000}'
+```
+
+  * **確認**: ブラウザのUIが自動更新され、請求状況に「未払い」のレコードが表示されることを確認します。
+
+#### ステップ C: 支払い完了
+
+`member_bills`テーブルから`id`をコピーし、以下のコマンドを実行します。
+
+```sh
+# 会員請求IDを取得するSQL
+SELECT id FROM member_bills WHERE user_id = 'test-user-01';
+
+# cURLコマンド
+curl -X POST http://localhost:8080/webhook/payment-completed -H "Content-Type: application/json" -d '{"bill_id": "ここにIDを貼り付け", "user_id": "test-user-01", "amount": 5000}'
+```
+
+  * **確認**: ブラウザのUIが自動更新され、請求状況の`status`が`paid`に変わっていることを確認します。
